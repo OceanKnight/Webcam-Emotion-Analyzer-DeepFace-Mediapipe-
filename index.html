@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Emotion Analyzer</title>
+
+<style>
+/* Basic styling for layout */
+body {
+  margin: 0;
+  background: #0f172a;
+  color: #e5e7eb;
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+  font-family: system-ui;
+}
+.container {
+  max-width: 900px;
+  width: 100%;
+}
+video, canvas {
+  width: 100%;
+  border-radius: 10px;
+}
+.overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+.wrapper {
+  position: relative;
+}
+button {
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  margin-right: 8px;
+}
+#start { background: #22c55e; }
+#capture { background: #3b82f6; }
+#stop { background: #dc2626; }
+.results {
+  margin-top: 10px;
+  padding: 12px;
+  background: #1e293b;
+  border-radius: 6px;
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Face Emotion Analyzer</h1>
+  <p>Webcam + DeepFace + Mediapipe</p>
+
+  <div class="wrapper">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="overlay" class="overlay"></canvas>
+  </div>
+
+  <br />
+
+  <button id="start">Start Camera</button>
+  <button id="capture" disabled>Analyze Frame</button>
+  <button id="stop" disabled>Stop Camera</button>
+
+  <div class="results">
+    <h3>Results</h3>
+    <div id="resultList">No frame analyzed yet</div>
+  </div>
+</div>
+
+<script>
+const BACKEND_URL = "http://127.0.0.1:8000/analyze";
+
+const video = document.getElementById("video");
+const overlay = document.getElementById("overlay");
+const ctx = overlay.getContext("2d");
+
+const startBtn = document.getElementById("start");
+const stopBtn = document.getElementById("stop");
+const captureBtn = document.getElementById("capture");
+const resultList = document.getElementById("resultList");
+
+let stream = null;
+
+startBtn.onclick = async () => {
+  stream = await navigator.mediaDevices.getUserMedia({ video: true });
+  video.srcObject = stream;
+
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+  captureBtn.disabled = false;
+
+  video.onloadedmetadata = () => {
+    overlay.width = video.videoWidth;
+    overlay.height = video.videoHeight;
+  };
+};
+
+stopBtn.onclick = () => {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+
+  overlay.getContext("2d").clearRect(0, 0, overlay.width, overlay.height);
+
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  captureBtn.disabled = true;
+};
+
+captureBtn.onclick = async () => {
+  if (!stream) return;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const cctx = canvas.getContext("2d");
+  cctx.drawImage(video, 0, 0);
+
+  const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", 0.9));
+  const formData = new FormData();
+  formData.append("frame", blob, "frame.jpg");
+
+  const res = await fetch(BACKEND_URL, {
+    method: "POST",
+    body: formData
+  });
+
+  const data = await res.json();
+  renderResults(data);
+  drawBoxes(data);
+};
+
+function renderResults(data) {
+  if (data.num_faces === 0) {
+    resultList.innerHTML = "No faces detected.";
+    return;
+  }
+
+  resultList.innerHTML = "";
+  data.faces.forEach((f, i) => {
+    const div = document.createElement("div");
+    div.innerHTML = `
+      <strong>Face ${i + 1}</strong><br>
+      Emotion: ${f.emotion}<br>
+      Confidence: ${(f.confidence * 100).toFixed(1)}%
+      <hr>
+    `;
+    resultList.appendChild(div);
+  });
+}
+
+function drawBoxes(data) {
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+  data.faces.forEach(face => {
+    const b = face.bbox;
+    ctx.strokeStyle = "#22c55e";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(b.xmin, b.ymin, b.xmax - b.xmin, b.ymax - b.ymin);
+
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(b.xmin, b.ymin - 20, 120, 20);
+
+    ctx.fillStyle = "#22c55e";
+    ctx.fillText(
+      `${face.emotion} ${(face.confidence * 100).toFixed(0)}%`,
+      b.xmin + 4,
+      b.ymin - 6
+    );
+  });
+}
+</script>
+
+</body>
+</html>
